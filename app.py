@@ -869,4 +869,109 @@ with tabs[4]:
     t_ret = (e_val/s_val-1) if s_val>0 else 0
     cagr  = (1+t_ret)**(1/n_yrs)-1 if n_yrs>0 else 0
     av    = float(dr.std()*np.sqrt(252))
-    rf_d
+    rf_d  = (1.045)**(1/252)-1
+    sh    = float(((dr-rf_d).mean()/(dr-rf_d).std()*np.sqrt(252))) if dr.std()>0 else 0
+    mdd   = float(((total-total.cummax())/total.cummax()).min()*100)
+
+    m1,m2,m3,m4,m5,m6 = st.columns(6)
+    m1.metric("Start Value",   f"${s_val:,.2f}")
+    m2.metric("Current Value", f"${e_val:,.2f}",
+              delta=f"${e_val-s_val:,.2f}")
+    m3.metric("Total Return",  f"{t_ret*100:+.2f}%")
+    m4.metric("CAGR",          f"{cagr*100:+.2f}%")
+    m5.metric("Sharpe",        f"{sh:.3f}")
+    m6.metric("Max Drawdown",  f"{mdd:.2f}%")
+
+    st.markdown("""
+    <div class="callout">
+    <strong>CAGR</strong> = smoothed annual growth rate.
+    <strong>Sharpe</strong> = return per unit of risk taken (above 1.0 is strong).
+    <strong>Max Drawdown</strong> = worst peak-to-trough drop — how bad the worst moment felt.
+    </div>
+    """, unsafe_allow_html=True)
+
+    ticker_cols = [col for col in value_df.columns if col!="Total"]
+    colors_h    = ["#3498db","#2ecc71","#e74c3c","#f39c12",
+                   "#9b59b6","#1abc9c","#e67e22","#34495e"]
+
+    fig,axes = plt.subplots(3,1,figsize=(13,11),facecolor="white",
+                             gridspec_kw={"height_ratios":[3,1.5,1.5]})
+
+    ax1 = axes[0]
+    ax1.stackplot(value_df.index,
+                  [value_df[t].values for t in ticker_cols],
+                  labels=ticker_cols,
+                  colors=colors_h[:len(ticker_cols)],alpha=0.65)
+    ax1.plot(value_df.index,value_df["Total"],color="#2c3e50",lw=2,label="Total")
+    ax1.set_title("Portfolio Value Over Time",fontsize=11,fontweight="bold")
+    ax1.set_ylabel("Value ($)"); fmt_price(ax1)
+    ax1.legend(fontsize=8); ax1.grid(alpha=0.2); ax1.set_facecolor("#fafafa")
+
+    ax2 = axes[1]
+    dd  = (total-total.cummax())/total.cummax()*100
+    ax2.fill_between(total.index,dd,0,color="#c0392b",alpha=0.4)
+    ax2.plot(total.index,dd,color="#c0392b",lw=1.2)
+    ax2.set_title("Drawdown (%)",fontsize=10,fontweight="bold")
+    ax2.set_ylabel("%"); ax2.grid(alpha=0.2); ax2.set_facecolor("#fafafa")
+
+    ax3 = axes[2]
+    dr_pct = dr*100
+    ax3.hist(dr_pct,bins=60,color="#2980b9",alpha=0.8,edgecolor="white")
+    ax3.axvline(0,color="#2c3e50",lw=1.2)
+    ax3.axvline(float(dr_pct.mean()),color="#27ae60",lw=1.5,ls="--",
+                label=f"Mean {dr_pct.mean():.2f}%/day")
+    ax3.set_title("Daily Return Distribution",fontsize=10,fontweight="bold")
+    ax3.set_xlabel("Daily Return (%)"); ax3.set_ylabel("Days")
+    ax3.legend(fontsize=8); ax3.grid(alpha=0.2); ax3.set_facecolor("#fafafa")
+
+    plt.tight_layout()
+    st.pyplot(fig,use_container_width=True); plt.close(fig)
+
+    # Rolling Sharpe
+    if len(dr) >= 90:
+        st.markdown('<div class="section-header">📐 Rolling 90-Day Sharpe</div>',
+                    unsafe_allow_html=True)
+        rs = ((dr-rf_d).rolling(90).mean() /
+              (dr-rf_d).rolling(90).std() * np.sqrt(252)).dropna()
+        fig_rs,ax_rs = plt.subplots(figsize=(13,3.5),facecolor="white")
+        ax_rs.plot(rs.index,rs,color="#8e44ad",lw=1.8)
+        ax_rs.axhline(0,  color="#7f8c8d",ls="-", lw=0.8)
+        ax_rs.axhline(1.0,color="#27ae60",ls="--",lw=1,label="Sharpe = 1.0")
+        ax_rs.fill_between(rs.index,rs,0,where=rs>=0,
+                           color="#27ae60",alpha=0.12)
+        ax_rs.fill_between(rs.index,rs,0,where=rs<0,
+                           color="#c0392b",alpha=0.12)
+        ax_rs.set_ylabel("Sharpe (annualised)")
+        ax_rs.legend(fontsize=8); ax_rs.grid(alpha=0.2)
+        ax_rs.set_facecolor("#fafafa")
+        st.pyplot(fig_rs,use_container_width=True); plt.close(fig_rs)
+
+    # Allocation drift
+    st.markdown('<div class="section-header">🔄 Allocation Drift</div>',
+                unsafe_allow_html=True)
+    st.caption("How your weights shifted as prices moved. Large drift = consider rebalancing.")
+    drift = value_df[ticker_cols].div(value_df["Total"].replace(0,np.nan),axis=0)*100
+    fig_d,ax_d = plt.subplots(figsize=(13,4),facecolor="white")
+    ax_d.stackplot(drift.index,
+                   [drift[t].values for t in ticker_cols],
+                   labels=ticker_cols,
+                   colors=colors_h[:len(ticker_cols)],alpha=0.75)
+    ax_d.set_ylabel("Allocation (%)")
+    ax_d.set_ylim(0,100)
+    ax_d.yaxis.set_major_formatter(mticker.StrMethodFormatter("{x:.0f}%"))
+    ax_d.legend(fontsize=8,loc="upper left")
+    ax_d.grid(alpha=0.2); ax_d.set_facecolor("#fafafa")
+    ax_d.set_title("Portfolio Allocation Drift",fontsize=10,fontweight="bold")
+    st.pyplot(fig_d,use_container_width=True); plt.close(fig_d)
+
+    csv_h = value_df.to_csv().encode()
+    st.download_button("⬇️ Export Portfolio History CSV",
+                       data=csv_h, file_name="portfolio_history.csv",
+                       mime="text/csv")
+
+    st.markdown("""
+    <div class="callout-warn">
+    ⚠️ <strong>Disclaimer:</strong> For informational purposes only.
+    Not financial advice. Past performance does not guarantee future results.
+    </div>
+    """, unsafe_allow_html=True)
